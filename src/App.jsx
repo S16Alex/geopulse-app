@@ -6,7 +6,7 @@ import React, {
 } from 'react';
 
 import { api, supabase, stopWithKeepalive } from './supabase';
-import { AVATARS, avatarById } from './avatars';
+import { AVATARS, EMOTICONS, avatarById, emoticonById } from './avatars';
 import './styles.css';
 
 function readPendingInvite() {
@@ -18,8 +18,6 @@ function readPendingInvite() {
       sessionStorage.setItem('gp_pending_invite', code);
     } catch {}
 
-    // 초대 코드는 주소창에서 지웁니다.
-    // 인증용 access_token 해시는 invite가 있을 때만 해당하므로 건드리지 않습니다.
     window.history.replaceState(
       null,
       '',
@@ -59,8 +57,20 @@ function errorText(error) {
   return error?.message || '요청 처리 중 오류가 발생했습니다.';
 }
 
-/* ---------- 인증 ---------- */
+function formatTime(isoString) {
+  if (!isoString) return '';
+  try {
+    const date = new Date(isoString);
+    return date.toLocaleTimeString('ko-KR', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return '';
+  }
+}
 
+/* ---------- 인증 ---------- */
 function AuthPanel() {
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
@@ -122,10 +132,9 @@ function AuthPanel() {
     <main className="auth-wrap">
       <section className="card auth-card">
         <div className="brand">GeoPulse</div>
-        <h1>우리 위치, 귀여운 캐릭터로</h1>
+        <h1>우리 위치와 대화를 한곳에서</h1>
         <p className="muted">
-          초대한 그룹끼리만 위치를 공유합니다.
-          가입만으로 위치가 전송되지는 않습니다.
+          친구·그룹 목록을 관리하고, 귀여운 캐릭터로 실시간 위치와 이모티콘 채팅을 주고받으세요.
         </p>
 
         <div className="avatar-preview">
@@ -194,7 +203,6 @@ function AuthPanel() {
 }
 
 /* ---------- 그룹 상태 / 실시간 변경 알림 ---------- */
-
 function useGroupState() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -252,7 +260,6 @@ function useGroupState() {
 
     function onVisibility() {
       if (document.hidden) {
-        // 다시 열었을 때 오래된 마커가 먼저 보이지 않도록 제거합니다.
         setData((previous) =>
           previous ? { ...previous, members: [] } : previous
         );
@@ -264,7 +271,6 @@ function useGroupState() {
     refreshRef.current = pull;
     void pull();
 
-    // Realtime 연결 실패나 누락에 대비한 보조 동기화입니다.
     const interval = setInterval(() => void pull(), 10000);
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('online', schedule);
@@ -319,7 +325,6 @@ function useGroupState() {
 }
 
 /* ---------- 화면이 보이는 동안의 위치 공유 ---------- */
-
 function useForegroundLocation(session, refreshRef) {
   const [active, setActive] = useState(false);
   const [status, setStatus] = useState('위치 공유가 꺼져 있습니다.');
@@ -348,7 +353,6 @@ function useForegroundLocation(session, refreshRef) {
     }
 
     try {
-      // 시작 요청보다 종료 요청이 먼저 처리되는 것을 피합니다.
       await run.ready;
 
       if (background) {
@@ -427,7 +431,6 @@ function useForegroundLocation(session, refreshRef) {
           });
         });
 
-        // 위치 권한 응답이 늦게 도착하더라도 중지 뒤에는 전송하지 않습니다.
         if (run.cancelled || document.hidden) return;
 
         if (Math.abs(Date.now() - position.timestamp) > 15000) {
@@ -522,7 +525,7 @@ function loadNaver() {
     script.type = 'text/javascript';
     script.async = true;
     script.src = `https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=${encodeURIComponent(clientId)}`;
-    
+
     script.onload = () => {
       let attempts = 0;
       const checkReady = () => {
@@ -553,9 +556,33 @@ function loadNaver() {
   return naverPromise;
 }
 
-function markerIcon(maps, member, isMe) {
+function markerIcon(maps, member, isMe, latestChat) {
   const root = document.createElement('div');
-  root.style.cssText = 'width:104px;text-align:center;';
+  root.style.cssText = 'width:124px;text-align:center;position:relative;';
+
+  if (latestChat) {
+    const bubble = document.createElement('div');
+    bubble.style.cssText = [
+      'background:#ffffff',
+      'color:#0f172a',
+      'border:2px solid #059669',
+      'border-radius:12px',
+      'padding:4px 8px',
+      'font-size:11px',
+      'font-weight:700',
+      'margin-bottom:4px',
+      'box-shadow:0 3px 10px rgba(0,0,0,0.35)',
+      'white-space:nowrap',
+      'overflow:hidden',
+      'text-overflow:ellipsis',
+    ].join(';');
+
+    const emo = latestChat.emoticon ? emoticonById(latestChat.emoticon) : null;
+    bubble.textContent =
+      (emo ? `${emo.emoji} ` : '') +
+      (latestChat.message || (emo ? emo.label : ''));
+    root.append(bubble);
+  }
 
   const image = document.createElement('img');
   image.src = avatarById(member.avatar).src;
@@ -582,12 +609,12 @@ function markerIcon(maps, member, isMe) {
 
   return {
     content: root.outerHTML,
-    size: new maps.Size(104, 88),
-    anchor: new maps.Point(52, 64),
+    size: new maps.Size(124, latestChat ? 114 : 88),
+    anchor: new maps.Point(62, latestChat ? 90 : 64),
   };
 }
 
-function LocationMap({ members, myId, focus }) {
+function LocationMap({ members, messages, myId, focus }) {
   const element = useRef(null);
   const mapRef = useRef(null);
   const markers = useRef(new Map());
@@ -609,7 +636,6 @@ function LocationMap({ members, myId, focus }) {
         if (!alive || !element.current) return;
 
         window.navermap_authFailure = authFailure;
-
         map = new maps.Map(element.current, {
           center: new maps.LatLng(37.5665, 126.978),
           zoom: 16,
@@ -657,6 +683,12 @@ function LocationMap({ members, myId, focus }) {
     const maps = window.naver.maps;
     const present = new Set(members.map((member) => member.id));
 
+    // 각 구성원의 가장 최근 메시지 추출
+    const latestByUser = new Map();
+    (messages || []).forEach((msg) => {
+      latestByUser.set(msg.user_id, msg);
+    });
+
     markers.current.forEach(({ marker }, id) => {
       if (!present.has(id)) {
         marker.setMap(null);
@@ -666,10 +698,12 @@ function LocationMap({ members, myId, focus }) {
 
     members.forEach((member) => {
       const position = new maps.LatLng(member.lat, member.lng);
+      const latestChat = latestByUser.get(member.id) || null;
       const signature = JSON.stringify([
         member.name,
         member.avatar,
         member.id === myId,
+        latestChat?.id || null,
       ]);
       const existing = markers.current.get(member.id);
 
@@ -677,7 +711,7 @@ function LocationMap({ members, myId, focus }) {
         existing.marker.setPosition(position);
         if (existing.signature !== signature) {
           existing.marker.setIcon(
-            markerIcon(maps, member, member.id === myId)
+            markerIcon(maps, member, member.id === myId, latestChat)
           );
           existing.signature = signature;
         }
@@ -688,7 +722,7 @@ function LocationMap({ members, myId, focus }) {
             map: mapRef.current,
             position,
             title: member.name,
-            icon: markerIcon(maps, member, member.id === myId),
+            icon: markerIcon(maps, member, member.id === myId, latestChat),
           }),
         });
       }
@@ -699,7 +733,7 @@ function LocationMap({ members, myId, focus }) {
       mapRef.current.setCenter(new maps.LatLng(me.lat, me.lng));
       centered.current = true;
     }
-  }, [members, myId, ready]);
+  }, [members, messages, myId, ready]);
 
   useEffect(() => {
     if (!ready || !focus || !mapRef.current) return;
@@ -720,10 +754,122 @@ function LocationMap({ members, myId, focus }) {
   );
 }
 
-/* ---------- 프로필 ---------- */
+/* ---------- 그룹 채팅 및 이모티콘 패널 ---------- */
+function ChatPanel({ messages, myId, busy, onSend }) {
+  const [text, setText] = useState('');
+  const [showStickers, setShowStickers] = useState(false);
+  const listRef = useRef(null);
 
+  useEffect(() => {
+    if (listRef.current) {
+      listRef.current.scrollTop = listRef.current.scrollHeight;
+    }
+  }, [messages?.length]);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    setText('');
+    await onSend({ message: trimmed, emoticon: null });
+  }
+
+  async function handleSticker(emoId) {
+    setShowStickers(false);
+    await onSend({ message: text.trim(), emoticon: emoId });
+    setText('');
+  }
+
+  return (
+    <section className="card chat-card stack">
+      <div className="row between">
+        <h2>그룹 실시간 톡</h2>
+        <span className="pill">최근 대화 {(messages || []).length}건</span>
+      </div>
+
+      <div className="chat-list" ref={listRef}>
+        {(!messages || messages.length === 0) ? (
+          <p className="muted small center-text">
+            아직 대화가 없습니다. 첫 인사나 이모티콘을 보내보세요!
+          </p>
+        ) : (
+          messages.map((msg) => {
+            const isMe = msg.user_id === myId;
+            const emo = msg.emoticon ? emoticonById(msg.emoticon) : null;
+            return (
+              <div
+                key={msg.id}
+                className={`chat-item ${isMe ? 'chat-mine' : 'chat-other'}`}
+              >
+                {!isMe && (
+                  <img
+                    className="chat-avatar"
+                    src={avatarById(msg.avatar).src}
+                    alt=""
+                  />
+                )}
+                <div className="chat-bubble-wrap">
+                  {!isMe && <span className="chat-sender">{msg.name}</span>}
+                  <div className="chat-bubble">
+                    {emo && (
+                      <img
+                        className="chat-sticker"
+                        src={emo.src}
+                        alt={emo.label}
+                      />
+                    )}
+                    {msg.message && <p>{msg.message}</p>}
+                  </div>
+                  <small className="chat-time">{formatTime(msg.created_at)}</small>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {showStickers && (
+        <div className="sticker-picker">
+          {EMOTICONS.map((emo) => (
+            <button
+              key={emo.id}
+              type="button"
+              className="sticker-btn"
+              disabled={busy}
+              onClick={() => void handleSticker(emo.id)}
+            >
+              <img src={emo.src} alt={emo.label} />
+            </button>
+          ))}
+        </div>
+      )}
+
+      <form className="chat-input-row" onSubmit={handleSubmit}>
+        <button
+          type="button"
+          className="secondary sticker-toggle"
+          onClick={() => setShowStickers((prev) => !prev)}
+        >
+          😊 이모티콘
+        </button>
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="메시지를 입력하세요 (최대 200자)"
+          maxLength={200}
+        />
+        <button type="submit" disabled={busy || !text.trim()}>
+          전송
+        </button>
+      </form>
+    </section>
+  );
+}
+
+/* ---------- 프로필 수정 ---------- */
 function ProfileForm({ me, busy, onSave }) {
   const [name, setName] = useState(me.name);
+  const [statusMessage, setStatusMessage] = useState(me.status_message || '');
   const [avatar, setAvatar] = useState(me.avatar);
 
   return (
@@ -731,10 +877,10 @@ function ProfileForm({ me, busy, onSave }) {
       className="card stack"
       onSubmit={(event) => {
         event.preventDefault();
-        void onSave({ name, avatar });
+        void onSave({ name, avatar, status_message: statusMessage });
       }}
     >
-      <h2>내 캐릭터와 닉네임</h2>
+      <h2>내 프로필 설정</h2>
 
       <label>
         닉네임
@@ -743,6 +889,16 @@ function ProfileForm({ me, busy, onSave }) {
           onChange={(e) => setName(e.target.value)}
           maxLength={20}
           required
+        />
+      </label>
+
+      <label>
+        상태메시지 (친구·그룹 목록에 표시)
+        <input
+          value={statusMessage}
+          onChange={(e) => setStatusMessage(e.target.value)}
+          placeholder="예: 지금 강남역 가는 중!"
+          maxLength={40}
         />
       </label>
 
@@ -766,16 +922,17 @@ function ProfileForm({ me, busy, onSave }) {
   );
 }
 
-/* ---------- 로그인 후 화면 ---------- */
-
+/* ---------- 로그인 후 메인 화면 (사이드바 + 워크스페이스) ---------- */
 function Workspace({ session }) {
   const { data, error, connection, refreshRef } = useGroupState();
   const gps = useForegroundLocation(session, refreshRef);
   const [now, setNow] = useState(performance.now());
+  const [activeTab, setActiveTab] = useState('map'); // 'map' | 'friends' | 'groups' | 'profile'
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [groupName, setGroupName] = useState('우리 모임');
   const [joinCode, setJoinCode] = useState(INITIAL_INVITE);
+  const [friendCodeInput, setFriendCodeInput] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [consent, setConsent] = useState(false);
   const [focus, setFocus] = useState(null);
@@ -795,31 +952,43 @@ function Workspace({ session }) {
     };
   }, [groupId, stop]);
 
-  async function perform(action, payload = {}) {
+  async function perform(action, payload = {}, customNotice = '') {
     setBusy(true);
     setNotice('');
 
     try {
       const result = await api(action, payload);
-
       if (result?.invite_code) setInviteCode(result.invite_code);
-
       if (action === 'join') {
         try { sessionStorage.removeItem('gp_pending_invite'); } catch {}
         setJoinCode('');
+        setActiveTab('map');
       }
-
+      if (action === 'create') {
+        setActiveTab('map');
+      }
+      if (action === 'switch_group') {
+        setInviteCode('');
+        setActiveTab('map');
+      }
       if (action === 'leave') setInviteCode('');
 
-      setNotice(
-        action === 'profile'
-          ? '프로필을 저장했습니다.'
-          : action === 'create' || action === 'join'
-            ? '그룹에 참여했습니다. 위치는 공유 시작을 눌러야 전송됩니다.'
-            : action === 'invite'
-              ? '새 초대를 발급했습니다. 이전 초대는 무효입니다.'
-              : '처리했습니다.'
-      );
+      if (action !== 'chat') {
+        setNotice(
+          customNotice ||
+          (action === 'profile'
+            ? '프로필을 저장했습니다.'
+            : action === 'create' || action === 'join'
+              ? '그룹에 입장했습니다. 위치는 공유 시작을 눌러야 전송됩니다.'
+              : action === 'invite'
+                ? '새 초대를 발급했습니다. 이전 초대는 무효입니다.'
+                : action === 'add_friend'
+                  ? '친구 목록에 추가했습니다.'
+                  : action === 'remove_friend'
+                    ? '친구 목록에서 삭제했습니다.'
+                    : '처리했습니다.')
+        );
+      }
 
       await refreshRef.current();
     } catch (failure) {
@@ -840,22 +1009,22 @@ function Workspace({ session }) {
     }
   }
 
-  async function leaveGroup() {
+  async function leaveGroup(targetGroupId) {
     if (!window.confirm('이 그룹에서 나가고 내 위치 공유를 종료할까요?')) return;
     await stop();
-    await perform('leave');
+    await perform('leave', { group_id: targetGroupId });
   }
 
   const inviteLink = inviteCode
     ? `${window.location.origin}/#invite=${inviteCode}`
     : '';
 
-  async function copyInvite() {
+  async function copyText(value, label) {
     try {
-      await navigator.clipboard.writeText(inviteLink);
-      setNotice('초대 링크를 복사했습니다.');
+      await navigator.clipboard.writeText(value);
+      setNotice(`${label} 복사했습니다.`);
     } catch {
-      setNotice('자동 복사에 실패했습니다. 아래 초대 링크를 직접 복사하세요.');
+      setNotice(`자동 복사에 실패했습니다. 직접 복사해 주세요.`);
     }
   }
 
@@ -863,7 +1032,7 @@ function Workspace({ session }) {
     return (
       <main className="shell">
         <section className="card stack">
-          <h1>그룹 정보를 불러오는 중…</h1>
+          <h1>그룹 및 친구 정보를 불러오는 중…</h1>
           {error && <p className="notice">{error}</p>}
           <button onClick={() => void refreshRef.current()}>다시 시도</button>
           <button className="secondary" onClick={logout} disabled={busy}>
@@ -874,12 +1043,9 @@ function Workspace({ session }) {
     );
   }
 
-  // 기기 시각 대신 서버 기준 남은 유효 시간과 단조 증가 시간을 사용합니다.
-  // 왕복 시간을 보수적으로 차감하여 오래된 마커를 일찍 제거합니다.
-  const elapsed =
-    Math.max(0, now - data._receivedAt) + data._rtt;
+  const elapsed = Math.max(0, now - data._receivedAt) + data._rtt;
 
-  const visibleMembers = data.members.filter((member) => (
+  const visibleMembers = (data.members || []).filter((member) => (
     Number.isFinite(member.lat) &&
     Number.isFinite(member.lng) &&
     member.expires_at &&
@@ -888,232 +1054,410 @@ function Workspace({ session }) {
 
   const visibleIds = new Set(visibleMembers.map((member) => member.id));
   const owner = data.group?.owner_id === data.me.id;
+  const groups = data.groups || [];
+  const friends = data.friends || [];
+  const messages = data.messages || [];
 
   return (
-    <main className="shell">
-      <header className="app-header">
-        <div>
-          <div className="brand">GeoPulse</div>
-          <div className="muted">{data.group?.name || '그룹 참여 전'}</div>
+    <div className="app-layout">
+      {/* ---------- 왼쪽 메신저형 사이드바 ---------- */}
+      <aside className="messenger-sidebar">
+        <div className="sidebar-header">
+          <div>
+            <div className="brand">GeoPulse</div>
+            <div className="muted small">{data.group?.name || '그룹 미선택'}</div>
+          </div>
+          <button className="secondary small-btn" onClick={logout} disabled={busy}>
+            로그아웃
+          </button>
         </div>
-        <button className="secondary" onClick={logout} disabled={busy}>
-          로그아웃
-        </button>
-      </header>
 
-      {notice && <p className="notice" role="status">{notice}</p>}
-      {error && (
-        <p className="notice warning" role="alert">
-          서버 통신 확인 필요: {error}
-        </p>
-      )}
+        {/* 내 미니 프로필 카드 */}
+        <div className="my-mini-card">
+          <img src={avatarById(data.me.avatar).src} alt="" />
+          <div className="member-text">
+            <strong>{data.me.name}</strong>
+            <small>{data.me.status_message || '상태메시지가 없습니다.'}</small>
+            <small className="code-badge">
+              내 친구코드: <b>{data.me.friend_code}</b>
+              <button
+                type="button"
+                className="inline-copy"
+                onClick={() => void copyText(data.me.friend_code, '내 친구 코드를')}
+              >
+                복사
+              </button>
+            </small>
+          </div>
+        </div>
 
-      {data.group && (
-        <>
-          <LocationMap
-            members={visibleMembers}
-            myId={data.me.id}
-            focus={focus}
-          />
+        {/* 네비게이션 탭 버튼 */}
+        <nav className="sidebar-tabs">
+          <button
+            type="button"
+            className={activeTab === 'map' ? 'tab-btn active' : 'tab-btn'}
+            onClick={() => setActiveTab('map')}
+          >
+            🗺️ 지도·톡
+          </button>
+          <button
+            type="button"
+            className={activeTab === 'friends' ? 'tab-btn active' : 'tab-btn'}
+            onClick={() => setActiveTab('friends')}
+          >
+            👤 친구 ({friends.length})
+          </button>
+          <button
+            type="button"
+            className={activeTab === 'groups' ? 'tab-btn active' : 'tab-btn'}
+            onClick={() => setActiveTab('groups')}
+          >
+            💬 그룹 ({groups.length})
+          </button>
+          <button
+            type="button"
+            className={activeTab === 'profile' ? 'tab-btn active' : 'tab-btn'}
+            onClick={() => setActiveTab('profile')}
+          >
+            ⚙️ 내 정보
+          </button>
+        </nav>
 
-          <section className="card stack">
-            <div className="row between">
-              <h2>내 위치 공유</h2>
-              <span className="pill">{connection}</span>
-            </div>
-
-            <label className="consent">
-              <input
-                type="checkbox"
-                checked={consent}
-                disabled={gps.active}
-                onChange={(e) => setConsent(e.target.checked)}
-              />
-              <span>
-                내 정밀 위치를 현재 그룹 구성원에게 공유하는 데 동의합니다.
-              </span>
-            </label>
-
-            <p className="muted small">
-              화면을 벗어나면 새 위치 전송을 멈춥니다.
-              종료 요청이 전달되지 않으면 마지막 위치는 서버 수신 후
-              최대 45초까지 표시될 수 있습니다.
-            </p>
-
-            <button
-              className={gps.active ? 'danger' : ''}
-              disabled={busy || (!gps.active && !consent)}
-              onClick={() => {
-                if (gps.active) void stop();
-                else void gps.start();
+        {/* 사이드바 내부 리스트 (PC에서는 항상 표시 / 모바일에서는 선택 탭 표시) */}
+        <div className="sidebar-body">
+          {/* 1) 친구 목록 패널 */}
+          <div className={activeTab === 'friends' ? 'panel-section show' : 'panel-section'}>
+            <div className="section-title">친구 추가</div>
+            <form
+              className="compact-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!friendCodeInput.trim()) return;
+                void perform('add_friend', { code: friendCodeInput.trim() });
+                setFriendCodeInput('');
               }}
             >
-              {gps.active ? '위치 공유 중지' : '위치 공유 시작'}
-            </button>
+              <input
+                value={friendCodeInput}
+                onChange={(e) => setFriendCodeInput(e.target.value)}
+                placeholder="친구의 8자리 코드 입력"
+                maxLength={16}
+              />
+              <button type="submit" disabled={busy}>추가</button>
+            </form>
 
-            <p className="muted small" role="status">{gps.status}</p>
-          </section>
-
-          <section className="card stack">
-            <div className="row between">
-              <h2>구성원 {data.members.length}명</h2>
-              <span className="pill">위치 표시 {visibleMembers.length}명</span>
-            </div>
-
-            {data.members.map((member) => {
-              const visible = visibleIds.has(member.id);
-              const age = visible
-                ? Math.max(0, Math.floor((
-                    Date.parse(data.server_time) -
-                    Date.parse(member.updated_at) +
-                    elapsed
-                  ) / 1000))
-                : null;
-
-              return (
-                <button
-                  className="member-row"
-                  key={member.id}
-                  disabled={!visible}
-                  onClick={() => setFocus({
-                    lat: member.lat,
-                    lng: member.lng,
-                    nonce: Date.now(),
-                  })}
-                >
-                  <img src={avatarById(member.avatar).src} alt="" />
-                  <span className="member-text">
-                    <strong>
-                      {member.name}{member.id === data.me.id ? ' · 나' : ''}
-                      {member.id === data.group.owner_id ? ' · 그룹장' : ''}
-                    </strong>
-                    <small>
-                      {visible
-                        ? `${age}초 전 · 정확도 약 ${Math.round(member.accuracy)}m`
-                        : '공유 꺼짐 또는 최신 위치 없음'}
-                    </small>
-                  </span>
-                  {visible && <span>지도 보기</span>}
-                </button>
-              );
-            })}
-          </section>
-
-          <section className="card stack">
-            <h2>그룹 관리</h2>
-
-            {owner ? (
-              <>
-                <p className="muted small">
-                  새 초대를 발급하면 이전 링크가 무효가 됩니다.
-                  새 초대는 24시간 동안 사용할 수 있습니다.
-                </p>
-                <button
-                  disabled={busy}
-                  onClick={() => void perform('invite')}
-                >
-                  새 초대 링크 발급
-                </button>
-              </>
+            <div className="section-title">내 친구 목록 ({friends.length}명)</div>
+            {friends.length === 0 ? (
+              <p className="muted small">
+                아직 등록된 친구가 없습니다. 친구 코드를 입력하거나 그룹원 목록에서 [+ 친구]를 눌러보세요!
+              </p>
             ) : (
-              <p className="muted">그룹장이 초대 링크를 발급할 수 있습니다.</p>
+              <div className="stack-tight">
+                {friends.map((fr) => (
+                  <div className="messenger-row" key={fr.id}>
+                    <img src={avatarById(fr.avatar).src} alt="" />
+                    <div className="member-text">
+                      <strong>
+                        {fr.name}
+                        {fr.is_sharing && <span className="online-dot"> ● 공유 중</span>}
+                      </strong>
+                      <small>{fr.status_message || '상태메시지 없음'}</small>
+                    </div>
+                    <button
+                      type="button"
+                      className="secondary tiny-btn"
+                      disabled={busy}
+                      onClick={() => void perform('remove_friend', { friend_id: fr.id })}
+                    >
+                      삭제
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* 2) 그룹 목록 패널 */}
+          <div className={activeTab === 'groups' ? 'panel-section show' : 'panel-section'}>
+            <div className="section-title">내 그룹 목록 ({groups.length})</div>
+            {groups.length === 0 ? (
+              <p className="muted small">참여 중인 그룹이 없습니다. 아래에서 새 그룹을 만들거나 초대 코드로 참여하세요.</p>
+            ) : (
+              <div className="stack-tight">
+                {groups.map((grp) => (
+                  <div
+                    key={grp.id}
+                    className={`messenger-row ${grp.is_active ? 'active-group-row' : ''}`}
+                  >
+                    <div className="group-icon">👥</div>
+                    <div className="member-text">
+                      <strong>
+                        {grp.name}
+                        {grp.is_active && <span className="online-dot"> · 현재 선택됨</span>}
+                      </strong>
+                      <small>구성원 {grp.member_count}명</small>
+                    </div>
+                    {!grp.is_active ? (
+                      <button
+                        type="button"
+                        className="tiny-btn"
+                        disabled={busy}
+                        onClick={async () => {
+                          await stop();
+                          await perform('switch_group', { group_id: grp.id }, `'${grp.name}' 그룹으로 전환했습니다.`);
+                        }}
+                      >
+                        입장
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="danger secondary tiny-btn"
+                        disabled={busy}
+                        onClick={() => void leaveGroup(grp.id)}
+                      >
+                        나가기
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
             )}
 
-            {inviteLink && (
-              <>
-                <label>
-                  초대 링크
-                  <input
-                    value={inviteLink}
-                    readOnly
-                    onFocus={(e) => e.target.select()}
-                  />
-                </label>
-                <button className="secondary" onClick={copyInvite}>
-                  링크 복사
-                </button>
-                <small className="muted break">
-                  직접 입력용 코드: {inviteCode}
-                </small>
-              </>
-            )}
+            <hr />
 
-            <button className="danger secondary" disabled={busy} onClick={leaveGroup}>
-              그룹 나가기
-            </button>
-          </section>
-        </>
-      )}
-
-      <ProfileForm
-        key={`${data.me.id}:${data.me.name}:${data.me.avatar}`}
-        me={data.me}
-        busy={busy}
-        onSave={(profile) => perform('profile', profile)}
-      />
-
-      {!data.group && (
-        <section className="card stack">
-          <h2>그룹 만들기 또는 참여하기</h2>
-          <p className="muted small">
-            참여하면 그룹에 닉네임과 캐릭터가 표시됩니다.
-            위치는 별도로 공유를 시작해야 전송됩니다.
-          </p>
-
-          <form
-            className="stack"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void perform('create', { name: groupName });
-            }}
-          >
-            <label>
-              새 그룹 이름
+            <div className="section-title">새 그룹 만들기</div>
+            <form
+              className="stack-tight"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void perform('create', { name: groupName });
+              }}
+            >
               <input
                 value={groupName}
                 onChange={(e) => setGroupName(e.target.value)}
+                placeholder="새 그룹 이름 (1~30자)"
                 maxLength={30}
                 required
               />
-            </label>
-            <button disabled={busy}>새 그룹 만들기</button>
-          </form>
+              <button disabled={busy}>새 그룹 만들기</button>
+            </form>
 
-          <hr />
-
-          <form
-            className="stack"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void perform('join', { code: normalizeInvite(joinCode) });
-            }}
-          >
-            <label>
-              초대 코드 또는 링크
+            <div className="section-title">초대 코드로 그룹 참여</div>
+            <form
+              className="stack-tight"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void perform('join', { code: normalizeInvite(joinCode) });
+              }}
+            >
               <input
                 value={joinCode}
                 onChange={(e) => setJoinCode(e.target.value)}
-                placeholder="받은 초대 링크를 붙여 넣으세요"
+                placeholder="초대 링크 또는 코드 붙여넣기"
                 required
               />
-            </label>
-            <button className="secondary" disabled={busy}>
-              초대받은 그룹 참여
-            </button>
-          </form>
-        </section>
-      )}
+              <button className="secondary" disabled={busy}>
+                초대받은 그룹 참여
+              </button>
+            </form>
+          </div>
 
-      <footer className="muted small footer">
-        위치 정확도와 갱신 속도는 기기·GPS·네트워크 상태에 따라 달라집니다.
-        긴급 구조 서비스로 사용하지 마세요.
-      </footer>
-    </main>
+          {/* 3) 내 프로필 설정 패널 */}
+          <div className={activeTab === 'profile' ? 'panel-section show' : 'panel-section'}>
+            <ProfileForm
+              key={`${data.me.id}:${data.me.name}:${data.me.avatar}:${data.me.status_message}`}
+              me={data.me}
+              busy={busy}
+              onSave={(profile) => perform('profile', profile)}
+            />
+          </div>
+        </div>
+      </aside>
+
+      {/* ---------- 오른쪽 메인 화면 (지도 + 위치 공유 + 그룹 채팅 + 그룹원) ---------- */}
+      <main className="main-content">
+        {notice && <p className="notice" role="status">{notice}</p>}
+        {error && (
+          <p className="notice warning" role="alert">
+            서버 통신 확인 필요: {error}
+          </p>
+        )}
+
+        {!data.group ? (
+          <section className="card stack">
+            <h2>그룹을 선택하거나 새로 만들어 주세요</h2>
+            <p className="muted small">
+              왼쪽 사이드바(모바일은 [그룹] 탭)에서 그룹을 만들거나 초대 코드로 참여하면 지도와 실시간 채팅이 활성화됩니다.
+            </p>
+            <button onClick={() => setActiveTab('groups')}>
+              그룹 목록 / 만들기로 이동
+            </button>
+          </section>
+        ) : (
+          <div className={activeTab === 'map' ? 'map-workspace show' : 'map-workspace'}>
+            <LocationMap
+              members={visibleMembers}
+              messages={messages}
+              myId={data.me.id}
+              focus={focus}
+            />
+
+            <div className="workspace-grid">
+              {/* 실시간 그룹 채팅 및 이모티콘 */}
+              <ChatPanel
+                messages={messages}
+                myId={data.me.id}
+                busy={busy}
+                onSend={(chatPayload) => perform('chat', chatPayload)}
+              />
+
+              <div className="stack">
+                {/* 내 위치 공유 스위치 카드 */}
+                <section className="card stack">
+                  <div className="row between">
+                    <h2>내 위치 공유 ({data.group.name})</h2>
+                    <span className="pill">{connection}</span>
+                  </div>
+
+                  <label className="consent">
+                    <input
+                      type="checkbox"
+                      checked={consent}
+                      disabled={gps.active}
+                      onChange={(e) => setConsent(e.target.checked)}
+                    />
+                    <span>
+                      내 정밀 위치를 현재 그룹 구성원에게 공유하는 데 동의합니다.
+                    </span>
+                  </label>
+
+                  <button
+                    className={gps.active ? 'danger' : ''}
+                    disabled={busy || (!gps.active && !consent)}
+                    onClick={() => {
+                      if (gps.active) void stop();
+                      else void gps.start();
+                    }}
+                  >
+                    {gps.active ? '위치 공유 중지' : '위치 공유 시작'}
+                  </button>
+
+                  <p className="muted small" role="status">{gps.status}</p>
+                </section>
+
+                {/* 현재 그룹 구성원 및 친구 추가 카드 */}
+                <section className="card stack">
+                  <div className="row between">
+                    <h2>그룹 구성원 {(data.members || []).length}명</h2>
+                    <span className="pill">지도 표시 {visibleMembers.length}명</span>
+                  </div>
+
+                  {(data.members || []).map((member) => {
+                    const visible = visibleIds.has(member.id);
+                    const isMe = member.id === data.me.id;
+                    const age = visible
+                      ? Math.max(0, Math.floor((
+                          Date.parse(data.server_time) -
+                          Date.parse(member.updated_at) +
+                          elapsed
+                        ) / 1000))
+                      : null;
+
+                    return (
+                      <div className="member-row" key={member.id}>
+                        <img src={avatarById(member.avatar).src} alt="" />
+                        <span className="member-text">
+                          <strong>
+                            {member.name}{isMe ? ' · 나' : ''}
+                            {member.id === data.group.owner_id ? ' · 그룹장' : ''}
+                          </strong>
+                          {member.status_message && (
+                            <small className="status-quote">"{member.status_message}"</small>
+                          )}
+                          <small>
+                            {visible
+                              ? `${age}초 전 · 정확도 약 ${Math.round(member.accuracy)}m`
+                              : '공유 꺼짐 또는 최신 위치 없음'}
+                          </small>
+                        </span>
+
+                        <div className="row">
+                          {visible && (
+                            <button
+                              type="button"
+                              className="tiny-btn"
+                              onClick={() => setFocus({
+                                lat: member.lat,
+                                lng: member.lng,
+                                nonce: Date.now(),
+                              })}
+                            >
+                              지도 보기
+                            </button>
+                          )}
+                          {!isMe && !member.is_friend && (
+                            <button
+                              type="button"
+                              className="secondary tiny-btn"
+                              disabled={busy}
+                              onClick={() => void perform('add_friend', { friend_id: member.id })}
+                            >
+                              + 친구
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* 초대 링크 발급 */}
+                  <div className="invite-box stack-tight">
+                    {owner ? (
+                      <button
+                        className="secondary"
+                        disabled={busy}
+                        onClick={() => void perform('invite')}
+                      >
+                        🔗 그룹 초대 링크·코드 발급
+                      </button>
+                    ) : (
+                      <small className="muted">그룹장이 초대 링크를 발급할 수 있습니다.</small>
+                    )}
+
+                    {inviteLink && (
+                      <div className="stack-tight">
+                        <input
+                          value={inviteLink}
+                          readOnly
+                          onFocus={(e) => e.target.select()}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void copyText(inviteLink, '초대 링크를')}
+                        >
+                          초대 링크 복사
+                        </button>
+                        <small className="muted break">직접 입력 코드: {inviteCode}</small>
+                      </div>
+                    )}
+                  </div>
+                </section>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <footer className="muted small footer">
+          위치 정확도와 갱신 속도는 기기·GPS·네트워크 상태에 따라 달라집니다. 긴급 구조 서비스로 사용하지 마세요.
+        </footer>
+      </main>
+    </div>
   );
 }
 
 /* ---------- 루트 ---------- */
-
 export default function App() {
   const [session, setSession] = useState(undefined);
   const [authError, setAuthError] = useState('');
