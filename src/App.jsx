@@ -489,14 +489,13 @@ function useForegroundLocation(session, refreshRef) {
 }
 
 /* ---------- 네이버 지도 / 캐릭터 마커 ---------- */
-
 let naverPromise;
 
 function loadNaver() {
   if (window.naver?.maps) return Promise.resolve(window.naver.maps);
   if (naverPromise) return naverPromise;
 
-  const clientId = import.meta.env.VITE_NAVER_MAP_CLIENT_ID;
+  const clientId = (import.meta.env.VITE_NAVER_MAP_CLIENT_ID || '').trim();
   if (!clientId) {
     return Promise.reject(
       new Error('VITE_NAVER_MAP_CLIENT_ID를 설정하고 다시 배포해 주세요.')
@@ -505,30 +504,46 @@ function loadNaver() {
 
   naverPromise = new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
+      naverPromise = null;
       reject(new Error('네이버 지도 연결 시간이 초과되었습니다.'));
     }, 15000);
 
-    window.__gpNaverReady = () => {
-      clearTimeout(timeout);
-      if (window.naver?.maps) resolve(window.naver.maps);
-      else reject(new Error('네이버 지도 SDK를 초기화하지 못했습니다.'));
-    };
-
     window.navermap_authFailure = () => {
       clearTimeout(timeout);
+      naverPromise = null;
       reject(new Error('네이버 Client ID와 허용 도메인을 확인해 주세요.'));
     };
 
+    const existing = document.getElementById('gp-naver-sdk');
+    if (existing) existing.remove();
+
     const script = document.createElement('script');
     script.id = 'gp-naver-sdk';
+    script.type = 'text/javascript';
     script.async = true;
-    script.src =
-      'https://oapi.map.naver.com/openapi/v3/maps.js' +
-      `?ncpKeyId=${encodeURIComponent(clientId)}` +
-      '&callback=__gpNaverReady';
+    script.src = `https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=${encodeURIComponent(clientId)}`;
+    
+    script.onload = () => {
+      let attempts = 0;
+      const checkReady = () => {
+        if (window.naver && window.naver.maps && window.naver.maps.Map) {
+          clearTimeout(timeout);
+          resolve(window.naver.maps);
+        } else if (attempts < 50) {
+          attempts += 1;
+          setTimeout(checkReady, 100);
+        } else {
+          clearTimeout(timeout);
+          naverPromise = null;
+          reject(new Error('네이버 지도 SDK를 초기화하지 못했습니다. Client ID 종류(Web Dynamic Map)를 확인해 주세요.'));
+        }
+      };
+      checkReady();
+    };
 
     script.onerror = () => {
       clearTimeout(timeout);
+      naverPromise = null;
       reject(new Error('네이버 지도 스크립트를 불러오지 못했습니다.'));
     };
 
