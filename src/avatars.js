@@ -55,6 +55,18 @@ function animalSvg(kind, color) {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
+function stickerSvg(bg, emoji, label) {
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+      <rect x="6" y="6" width="84" height="84" rx="22" fill="${bg}" stroke="#334155" stroke-width="3"/>
+      <text x="48" y="50" font-size="34" text-anchor="middle" dominant-baseline="central">${emoji}</text>
+      <rect x="14" y="64" width="68" height="20" rx="10" fill="#0f172acc"/>
+      <text x="48" y="75" font-size="11" font-weight="700" fill="#ffffff" font-family="sans-serif" text-anchor="middle" dominant-baseline="central">${label}</text>
+    </svg>
+  `;
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+
 export const AVATARS = [
   { id: 'bunny', name: '토끼', src: animalSvg('bunny', '#fff7ed') },
   { id: 'cat', name: '고양이', src: animalSvg('cat', '#cbd5e1') },
@@ -62,6 +74,21 @@ export const AVATARS = [
   { id: 'chick', name: '병아리', src: animalSvg('chick', '#fde68a') },
 ];
 
+export const EMOTICONS = [
+  { id: 'wave', label: '안녕!', emoji: '👋', src: stickerSvg('#fef3c7', '👋', '안녕!') },
+  { id: 'run', label: '가는 중', emoji: '🏃', src: stickerSvg('#dbeafe', '🏃', '가는 중!') },
+  { id: 'arrival', label: '도착!', emoji: '📍', src: stickerSvg('#dcfce7', '📍', '도착 완료!') },
+  { id: 'heart', label: '좋아요', emoji: '💖', src: stickerSvg('#fce7f3', '💖', '좋아요!') },
+  { id: 'coffee', label: '커피타임', emoji: '☕', src: stickerSvg('#ffedd5', '☕', '커피 한잔') },
+  { id: 'question', label: '어디야?', emoji: '👀', src: stickerSvg('#f3e8ff', '👀', '어디야?') },
+  { id: 'ok', label: '오케이', emoji: '🙆', src: stickerSvg('#e0f2fe', '🙆', '오케이!') },
+  { id: 'hurry', label: '빨리 와!', emoji: '⚡', src: stickerSvg('#fee2e2', '⚡', '빨리 와!') },
+];
+
 export function avatarById(id) {
   return AVATARS.find((item) => item.id === id) || AVATARS[0];
+}
+
+export function emoticonById(id) {
+  return EMOTICONS.find((item) => item.id === id) || null;
 }
