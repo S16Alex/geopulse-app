@@ -458,47 +458,105 @@ function useForegroundLocation(session, refreshRef) {
 let naverPromise;
 
 function loadNaver() {
-  if (window.naver?.maps) return Promise.resolve(window.naver.maps);
+  if (window.naver?.maps?.Map) return Promise.resolve(window.naver.maps);
   if (naverPromise) return naverPromise;
 
-  const clientId = import.meta.env.VITE_NAVER_MAP_CLIENT_ID;
+  const rawId = import.meta.env.VITE_NAVER_MAP_CLIENT_ID || '';
+  const clientId = rawId.trim().replace(/^['"]|['"]$/g, '');
   if (!clientId) {
     return Promise.reject(
       new Error('VITE_NAVER_MAP_CLIENT_ID를 설정하고 다시 배포해 주세요.')
     );
   }
 
-  naverPromise = new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(new Error('네이버 지도 연결 시간이 초과되었습니다.'));
-    }, 15000);
+  function tryLoad(paramName) {
+    return new Promise((resolve, reject) => {
+      const existing = document.getElementById('gp-naver-sdk');
+      if (existing) existing.remove();
 
-    window.__gpNaverReady = () => {
-      clearTimeout(timeout);
-      if (window.naver?.maps) resolve(window.naver.maps);
-      else reject(new Error('네이버 지도 SDK를 초기화하지 못했습니다.'));
-    };
+      let settled = false;
+      const finish = (fn, val) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        fn(val);
+      };
 
-    window.navermap_authFailure = () => {
-      clearTimeout(timeout);
-      reject(new Error('네이버 Client ID와 허용 도메인을 확인해 주세요.'));
-    };
+      const checkMaps = () => {
+        if (window.naver?.maps?.Map) {
+          finish(resolve, window.naver.maps);
+          return true;
+        }
+        if (window.naver?.maps?.onJSContentLoaded) {
+          window.naver.maps.onJSContentLoaded = () => {
+            if (window.naver?.maps?.Map) finish(resolve, window.naver.maps);
+            else finish(reject, new Error(`${paramName} 초기화 실패`));
+          };
+          return true;
+        }
+        return false;
+      };
 
-    const script = document.createElement('script');
-    script.id = 'gp-naver-sdk';
-    script.async = true;
-    script.src =
-      'https://oapi.map.naver.com/openapi/v3/maps.js' +
-      `?ncpKeyId=${encodeURIComponent(clientId)}` +
-      '&callback=__gpNaverReady';
+      const timeout = setTimeout(() => {
+        if (!checkMaps()) {
+          finish(reject, new Error('네이버 지도 연결 시간이 초과되었습니다.'));
+        }
+      }, 8000);
 
-    script.onerror = () => {
-      clearTimeout(timeout);
-      reject(new Error('네이버 지도 스크립트를 불러오지 못했습니다.'));
-    };
+      window.__gpNaverReady = () => {
+        if (!checkMaps()) {
+          setTimeout(() => {
+            if (!checkMaps()) {
+              finish(reject, new Error(`${paramName} 초기화 실패`));
+            }
+          }, 300);
+        }
+      };
 
-    document.head.appendChild(script);
-  });
+      window.navermap_authFailure = () => {
+        finish(
+          reject,
+          new Error('네이버 Client ID 또는 허용 도메인(Web 서비스 URL)을 확인해 주세요.')
+        );
+      };
+
+      const script = document.createElement('script');
+      script.id = 'gp-naver-sdk';
+      script.async = true;
+      script.src =
+        'https://oapi.map.naver.com/openapi/v3/maps.js' +
+        `?${paramName}=${encodeURIComponent(clientId)}` +
+        '&callback=__gpNaverReady';
+
+      script.onload = () => {
+        if (!checkMaps()) {
+          setTimeout(() => {
+            if (!checkMaps()) {
+              finish(reject, new Error(`${paramName} 로드 후 초기화 실패`));
+            }
+          }, 400);
+        }
+      };
+
+      script.onerror = () => {
+        finish(reject, new Error('네이버 지도 스크립트를 불러오지 못했습니다.'));
+      };
+
+      document.head.appendChild(script);
+    });
+  }
+
+  // ncpKeyId(신규 콘솔)를 먼저 시도하고 실패 시 ncpClientId(기존 콘솔)로 자동 재시도합니다.
+  naverPromise = tryLoad('ncpKeyId')
+    .catch(() => tryLoad('ncpClientId'))
+    .catch((err) => {
+      naverPromise = null;
+      throw new Error(
+        err?.message?.includes('도메인')
+          ? err.message
+          : '네이버 지도 SDK를 초기화하지 못했습니다. (네이버 콘솔의 Dynamic Map 체크 및 서비스 URL을 확인해 주세요.)'
+      );
+    });
 
   return naverPromise;
 }
